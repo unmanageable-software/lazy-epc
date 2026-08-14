@@ -24,11 +24,12 @@ The design keeps responsibilities narrow and explicit:
 
 - `cmd/giro` provides the CLI entry point.
 - `internal/epc` holds the EPC payment structure and payload generation boundary.
+- `internal/qr` converts a validated EPC payload into PNG bytes using the external `qrencode` executable.
 - `internal/document` renders a self-contained payment document as plain HTML.
 - `internal/store` is the archive boundary for storing generated documents in SQLite.
 - `templates` contains the static HTML template used for the payment document.
 
-`qrencode` is intentionally kept as an external system dependency in the initial implementation. That keeps the project simple, transparent, and easy to test while still aligning with the eventual pipeline.
+`qrencode` is an intentional runtime dependency for this project stage. The QR package accepts a validated payload string and returns PNG bytes without introducing a Go QR library or a higher-level abstraction.
 
 The project prefers boring, inspectable components over unnecessary application complexity.
 
