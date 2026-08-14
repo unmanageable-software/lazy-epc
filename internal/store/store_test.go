@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +44,7 @@ func TestSaveAndReadStoredValues(t *testing.T) {
 		Reference: "Invoice 2026-001",
 	}
 
-	id, err := store.Save(payment, "BCD\n002\n1\nSCT\n", "<html>ok</html>", createdAt)
+	id, err := store.Save(payment, "BCD\n002\n1\nSCT\n", "<html>ok</html>", createdAt, "internal follow-up")
 	if err != nil {
 		t.Fatalf("Save() returned error: %v", err)
 	}
@@ -67,6 +68,9 @@ func TestSaveAndReadStoredValues(t *testing.T) {
 	if record.Reference != payment.Reference {
 		t.Fatalf("Reference = %q, want %q", record.Reference, payment.Reference)
 	}
+	if record.Notes != "internal follow-up" {
+		t.Fatalf("Notes = %q, want %q", record.Notes, "internal follow-up")
+	}
 	if record.EPCPayload != "BCD\n002\n1\nSCT\n" {
 		t.Fatalf("EPCPayload = %q, want payload", record.EPCPayload)
 	}
@@ -85,7 +89,7 @@ func TestReopenExistingDB(t *testing.T) {
 		t.Fatalf("Open() returned error: %v", err)
 	}
 
-	_, err = store.Save(epc.Payment{Recipient: "A", IBAN: "DE89370400440532013000", Amount: 1234}, "payload", "html", time.Now().UTC())
+	_, err = store.Save(epc.Payment{Recipient: "A", IBAN: "DE89370400440532013000", Amount: 1234}, "payload", "html", time.Now().UTC(), "note")
 	if err != nil {
 		t.Fatalf("Save() returned error: %v", err)
 	}
@@ -108,6 +112,53 @@ func TestReopenExistingDB(t *testing.T) {
 	}
 }
 
+func TestUpgradeOldSchemaToIncludeNotes(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "payments.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() returned error: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE payments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at TEXT NOT NULL,
+			recipient TEXT NOT NULL,
+			iban TEXT NOT NULL,
+			amount_cents INTEGER NOT NULL,
+			reference TEXT,
+			epc_payload TEXT NOT NULL,
+			html TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO payments (created_at, recipient, iban, amount_cents, reference, epc_payload, html) VALUES (?, ?, ?, ?, ?, ?, ?)`, time.Now().UTC().Format(time.RFC3339), "Legacy", "DE89370400440532013000", 1234, "Ref-1", "payload", "html")
+	if err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() upgrade returned error: %v", err)
+	}
+	defer store.Close()
+
+	row := store.db.QueryRow(`SELECT notes FROM payments WHERE recipient = ?`, "Legacy")
+	var notes string
+	if err := row.Scan(&notes); err != nil {
+		t.Fatalf("scan notes after upgrade: %v", err)
+	}
+	if notes != "" {
+		t.Fatalf("upgraded notes should default to empty string, got %q", notes)
+	}
+}
+
 func TestSaveRejectsMissingPayloadOrHTML(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "payments.db")
 	store, err := Open(dbPath)
@@ -124,6 +175,56 @@ func TestSaveRejectsMissingPayloadOrHTML(t *testing.T) {
 	_, err = store.Save(epc.Payment{Recipient: "A", IBAN: "DE89370400440532013000", Amount: 1234}, "payload", "", time.Now().UTC())
 	if err == nil || !strings.Contains(err.Error(), "html") {
 		t.Fatalf("Save() with empty HTML error = %v, want substring %q", err, "html")
+	}
+}
+
+func TestFilterQueries(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "payments.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer store.Close()
+
+	_, err = store.Save(epc.Payment{Recipient: "Acme GmbH", IBAN: "DE89370400440532013000", Amount: 1234, Reference: "INV-001"}, "payload-1", "html-1", time.Now().UTC(), "first note")
+	if err != nil {
+		t.Fatalf("Save() first row: %v", err)
+	}
+	_, err = store.Save(epc.Payment{Recipient: "Beta Ltd", IBAN: "FR1420041010050000000000013", Amount: 2500, Reference: "INV-002"}, "payload-2", "html-2", time.Now().UTC(), "second note")
+	if err != nil {
+		t.Fatalf("Save() second row: %v", err)
+	}
+
+	rows, err := store.Query(Filters{Recipient: "acme"})
+	if err != nil {
+		t.Fatalf("Query(recipient) returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Recipient != "Acme GmbH" {
+		t.Fatalf("Query(recipient) = %#v, want one acme row", rows)
+	}
+
+	rows, err = store.Query(Filters{Reference: "INV-002"})
+	if err != nil {
+		t.Fatalf("Query(reference) returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Reference != "INV-002" {
+		t.Fatalf("Query(reference) = %#v, want one INV-002 row", rows)
+	}
+
+	rows, err = store.Query(Filters{IBAN: "FR14"})
+	if err != nil {
+		t.Fatalf("Query(iban) returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].IBAN != "FR1420041010050000000000013" {
+		t.Fatalf("Query(iban) = %#v, want one FR14 row", rows)
+	}
+
+	rows, err = store.Query(Filters{Notes: "second"})
+	if err != nil {
+		t.Fatalf("Query(notes) returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Notes != "second note" {
+		t.Fatalf("Query(notes) = %#v, want one second note row", rows)
 	}
 }
 

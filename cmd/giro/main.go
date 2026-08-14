@@ -42,7 +42,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: giro create --recipient \"Example GmbH\" --iban DE89370400440532013000 --amount 12.34 [--reference \"Invoice 2026-001\"] | giro demo")
+	return fmt.Errorf("usage: giro create --recipient \"Example GmbH\" --iban DE89370400440532013000 --amount 12.34 [--reference \"Invoice 2026-001\"] [--notes \"Optional internal note\"] | giro demo")
 }
 
 func runDemo() error {
@@ -65,11 +65,13 @@ func createCommand(args []string, outputPath string) error {
 		iban      string
 		amountStr string
 		reference string
+		notes     string
 	)
 	fs.StringVar(&recipient, "recipient", "", "recipient name")
 	fs.StringVar(&iban, "iban", "", "IBAN")
 	fs.StringVar(&amountStr, "amount", "", "amount in EUR, for example 12.34")
 	fs.StringVar(&reference, "reference", "", "optional payment reference")
+	fs.StringVar(&notes, "notes", "", "optional local note stored with the payment")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse arguments: %w", err)
@@ -110,7 +112,7 @@ func createCommand(args []string, outputPath string) error {
 	}
 	defer db.Close()
 
-	id, err := db.Save(payment, payload, html, generatedAt)
+	id, err := db.Save(payment, payload, html, generatedAt, notes)
 	if err != nil {
 		return fmt.Errorf("store payment record: %w", err)
 	}

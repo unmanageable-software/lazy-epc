@@ -20,8 +20,18 @@ type PaymentRecord struct {
 	IBAN        string
 	AmountCents int64
 	Reference   string
+	Notes       string
 	EPCPayload  string
 	HTML        string
+}
+
+// Filters are optional query constraints used by the archive layer for later
+// filtering by the most common payment fields.
+type Filters struct {
+	Recipient string
+	IBAN      string
+	Reference string
+	Notes     string
 }
 
 // DB is the SQLite-backed payment archive.
@@ -49,6 +59,7 @@ func Open(path string) (*DB, error) {
 			iban TEXT NOT NULL,
 			amount_cents INTEGER NOT NULL,
 			reference TEXT,
+			notes TEXT NOT NULL DEFAULT '',
 			epc_payload TEXT NOT NULL,
 			html TEXT NOT NULL
 		)
@@ -57,11 +68,47 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("create payments schema: %w", err)
 	}
 
+	if err := ensureNotesColumn(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	return &DB{db: db}, nil
 }
 
+func ensureNotesColumn(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(payments)`)
+	if err != nil {
+		return fmt.Errorf("read payments schema: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int64
+		var name string
+		var typ string
+		var notNull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
+			return fmt.Errorf("scan payments schema: %w", err)
+		}
+		if name == "notes" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate payments schema: %w", err)
+	}
+
+	if _, err := db.Exec(`ALTER TABLE payments ADD COLUMN notes TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("upgrade payments schema to include notes: %w", err)
+	}
+	return nil
+}
+
 // Save inserts a payment record and returns the generated row ID.
-func (db *DB) Save(payment epc.Payment, payload string, html string, createdAt time.Time) (int64, error) {
+func (db *DB) Save(payment epc.Payment, payload string, html string, createdAt time.Time, notes ...string) (int64, error) {
 	if db == nil || db.db == nil {
 		return 0, fmt.Errorf("database is not open")
 	}
@@ -72,10 +119,15 @@ func (db *DB) Save(payment epc.Payment, payload string, html string, createdAt t
 		return 0, fmt.Errorf("html is required")
 	}
 
+	noteText := ""
+	if len(notes) > 0 {
+		noteText = notes[0]
+	}
+
 	res, err := db.db.Exec(`
-		INSERT INTO payments (created_at, recipient, iban, amount_cents, reference, epc_payload, html)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, createdAt.Format(time.RFC3339), payment.Recipient, payment.IBAN, payment.Amount, payment.Reference, payload, html)
+		INSERT INTO payments (created_at, recipient, iban, amount_cents, reference, notes, epc_payload, html)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, createdAt.Format(time.RFC3339), payment.Recipient, payment.IBAN, payment.Amount, payment.Reference, noteText, payload, html)
 	if err != nil {
 		return 0, fmt.Errorf("insert payment: %w", err)
 	}
@@ -98,13 +150,13 @@ func (db *DB) Close() error {
 // GetByID fetches a stored payment by ID.
 func (db *DB) GetByID(id int64) (*PaymentRecord, error) {
 	row := db.db.QueryRow(`
-		SELECT id, created_at, recipient, iban, amount_cents, reference, epc_payload, html
+		SELECT id, created_at, recipient, iban, amount_cents, reference, notes, epc_payload, html
 		FROM payments WHERE id = ?
 	`, id)
 
 	var record PaymentRecord
 	var createdAt string
-	if err := row.Scan(&record.ID, &createdAt, &record.Recipient, &record.IBAN, &record.AmountCents, &record.Reference, &record.EPCPayload, &record.HTML); err != nil {
+	if err := row.Scan(&record.ID, &createdAt, &record.Recipient, &record.IBAN, &record.AmountCents, &record.Reference, &record.Notes, &record.EPCPayload, &record.HTML); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("payment %d not found", id)
 		}
@@ -116,4 +168,58 @@ func (db *DB) GetByID(id int64) (*PaymentRecord, error) {
 	}
 	record.CreatedAt = parsed
 	return &record, nil
+}
+
+// Query searches the archive using optional filters. Empty filters are ignored.
+func (db *DB) Query(filters Filters) ([]PaymentRecord, error) {
+	clauses := []string{}
+	args := []any{}
+
+	if filters.Recipient != "" {
+		clauses = append(clauses, "LOWER(recipient) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filters.Recipient)+"%")
+	}
+	if filters.IBAN != "" {
+		clauses = append(clauses, "LOWER(iban) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filters.IBAN)+"%")
+	}
+	if filters.Reference != "" {
+		clauses = append(clauses, "LOWER(reference) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filters.Reference)+"%")
+	}
+	if filters.Notes != "" {
+		clauses = append(clauses, "LOWER(notes) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filters.Notes)+"%")
+	}
+
+	query := `SELECT id, created_at, recipient, iban, amount_cents, reference, notes, epc_payload, html FROM payments`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY id ASC"
+
+	rows, err := db.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query payments: %w", err)
+	}
+	defer rows.Close()
+
+	var records []PaymentRecord
+	for rows.Next() {
+		var record PaymentRecord
+		var createdAt string
+		if err := rows.Scan(&record.ID, &createdAt, &record.Recipient, &record.IBAN, &record.AmountCents, &record.Reference, &record.Notes, &record.EPCPayload, &record.HTML); err != nil {
+			return nil, fmt.Errorf("scan payment: %w", err)
+		}
+		parsed, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		record.CreatedAt = parsed
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate payments: %w", err)
+	}
+	return records, nil
 }
