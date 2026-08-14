@@ -32,13 +32,27 @@ The design keeps responsibilities narrow and explicit:
 
 The document package builds a portable HTML file from payment metadata and embedded PNG bytes. It does not yet add SQLite persistence or CLI workflows.
 
-## Demo
+## CLI usage
+
+Create a payment document from concrete payment data:
+
+```bash
+go run ./cmd/giro create \
+  --recipient "Example GmbH" \
+  --iban DE89370400440532013000 \
+  --amount 12.34 \
+  --reference "Invoice 2026-001"
+```
+
+This writes `payment.html` in the current working directory and prints `generated payment.html` when successful.
+
+The `create` command accepts required `--recipient`, `--iban`, and `--amount` values and an optional `--reference` field. The amount parser accepts values like `12`, `12.3`, `12.34`, and `0.01`, and rejects malformed input, negatives, zero, and more than two decimal places.
+
+A simple demo command remains available for smoke testing:
 
 ```bash
 go run ./cmd/giro demo
 ```
-
-This writes `payment.html` in the current working directory and prints `generated payment.html` when successful.
 
 The project prefers boring, inspectable components over unnecessary application complexity.
 
