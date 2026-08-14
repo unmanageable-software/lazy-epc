@@ -48,6 +48,8 @@ This writes `payment.html` in the current working directory and prints `generate
 
 The `create` command accepts required `--recipient`, `--iban`, and `--amount` values and an optional `--reference` field. The amount parser accepts values like `12`, `12.3`, `12.34`, and `0.01`, and rejects malformed input, negatives, zero, and more than two decimal places.
 
+On successful generation, the CLI also opens or creates a local SQLite database named `payments.db` in the working directory and stores the generated payment record, including the EPC payload, rendered HTML, integer amount in cents, and a stable RFC3339 timestamp.
+
 A simple demo command remains available for smoke testing:
 
 ```bash
