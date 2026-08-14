@@ -175,21 +175,40 @@ func (db *DB) Query(filters Filters) ([]PaymentRecord, error) {
 	clauses := []string{}
 	args := []any{}
 
-	if filters.Recipient != "" {
-		clauses = append(clauses, "LOWER(recipient) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filters.Recipient)+"%")
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{name: "recipient", value: filters.Recipient},
+		{name: "iban", value: filters.IBAN},
+		{name: "reference", value: filters.Reference},
+		{name: "notes", value: filters.Notes},
 	}
-	if filters.IBAN != "" {
-		clauses = append(clauses, "LOWER(iban) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filters.IBAN)+"%")
+
+	nonEmpty := make([]struct {
+		name  string
+		value string
+	}, 0, len(fields))
+	for _, field := range fields {
+		if field.value != "" {
+			nonEmpty = append(nonEmpty, field)
+		}
 	}
-	if filters.Reference != "" {
-		clauses = append(clauses, "LOWER(reference) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filters.Reference)+"%")
-	}
-	if filters.Notes != "" {
-		clauses = append(clauses, "LOWER(notes) LIKE ?")
-		args = append(args, "%"+strings.ToLower(filters.Notes)+"%")
+
+	if len(nonEmpty) > 0 {
+		if len(nonEmpty) > 1 && allSameValue(nonEmpty) {
+			matches := make([]string, 0, len(nonEmpty))
+			for _, field := range nonEmpty {
+				matches = append(matches, "LOWER("+field.name+") LIKE ?")
+				args = append(args, "%"+strings.ToLower(field.value)+"%")
+			}
+			clauses = append(clauses, "("+strings.Join(matches, " OR ")+")")
+		} else {
+			for _, field := range nonEmpty {
+				clauses = append(clauses, "LOWER("+field.name+") LIKE ?")
+				args = append(args, "%"+strings.ToLower(field.value)+"%")
+			}
+		}
 	}
 
 	query := `SELECT id, created_at, recipient, iban, amount_cents, reference, notes, epc_payload, html FROM payments`
@@ -222,4 +241,20 @@ func (db *DB) Query(filters Filters) ([]PaymentRecord, error) {
 		return nil, fmt.Errorf("iterate payments: %w", err)
 	}
 	return records, nil
+}
+
+func allSameValue(fields []struct {
+	name  string
+	value string
+}) bool {
+	if len(fields) < 2 {
+		return true
+	}
+	first := strings.TrimSpace(fields[0].value)
+	for _, field := range fields[1:] {
+		if strings.TrimSpace(field.value) != first {
+			return false
+		}
+	}
+	return true
 }

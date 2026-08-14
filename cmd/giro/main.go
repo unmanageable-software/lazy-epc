@@ -14,6 +14,7 @@ import (
 	"github.com/unmanageable-software/lazy-epc/internal/epc"
 	"github.com/unmanageable-software/lazy-epc/internal/qr"
 	"github.com/unmanageable-software/lazy-epc/internal/store"
+	"github.com/unmanageable-software/lazy-epc/internal/tui"
 )
 
 func main() {
@@ -36,13 +37,18 @@ func run(args []string) error {
 		return runDemo()
 	case "create":
 		return createCommand(args[1:], "payment.html")
+	case "tui":
+		if len(args) != 1 {
+			return usageError()
+		}
+		return tui.Run()
 	default:
 		return usageError()
 	}
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: giro create --recipient \"Example GmbH\" --iban DE89370400440532013000 --amount 12.34 [--reference \"Invoice 2026-001\"] [--notes \"Optional internal note\"] | giro demo")
+	return fmt.Errorf("usage: giro create --recipient \"Example GmbH\" --iban DE89370400440532013000 --amount 12.34 [--reference \"Invoice 2026-001\"] [--notes \"Optional internal note\"] | giro demo | giro tui")
 }
 
 func runDemo() error {
