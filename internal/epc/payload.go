@@ -207,6 +207,12 @@ func validateNoNewlines(field, value string) error {
 }
 
 func formatCents(cents int64) string {
+	return FormatCents(cents)
+}
+
+// FormatCents converts a money value from integer euro cents into a standard
+// EUR display string without using floating-point arithmetic.
+func FormatCents(cents int64) string {
 	if cents < 0 {
 		return "EUR0.00"
 	}

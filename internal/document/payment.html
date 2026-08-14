@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Payment</h1>
+      </header>
+
+      <dl>
+        <dt>Generated</dt>
+        <dd>{{ .GeneratedAt }}</dd>
+
+        <dt>Recipient</dt>
+        <dd>{{ .Recipient }}</dd>
+
+        <dt>IBAN</dt>
+        <dd>{{ .IBAN }}</dd>
+
+        <dt>Amount</dt>
+        <dd>{{ .Amount }}</dd>
+
+        <dt>Reference</dt>
+        <dd>{{ .Reference }}</dd>
+      </dl>
+
+      <figure>
+        <img src="{{ safeURL .QRDataURL }}" alt="EPC payment QR code" />
+      </figure>
+    </main>
+  </body>
+</html>
