@@ -1,0 +1,45 @@
+# lazy-epc
+
+A small Go project for generating and archiving EPC QR / GiroCode payment documents.
+
+## Architecture
+
+The project intentionally follows a boring, inspectable flow:
+
+```text
+payment fields
+    ↓
+EPC payload
+    ↓
+qrencode
+    ↓
+PNG
+    ↓
+self-contained HTML
+    ↓
+SQLite
+```
+
+The design keeps responsibilities narrow and explicit:
+
+- `cmd/giro` provides the CLI entry point.
+- `internal/epc` holds the EPC payment structure and payload generation boundary.
+- `internal/document` renders a self-contained payment document as plain HTML.
+- `internal/store` is the archive boundary for storing generated documents in SQLite.
+- `templates` contains the static HTML template used for the payment document.
+
+`qrencode` is intentionally kept as an external system dependency in the initial implementation. That keeps the project simple, transparent, and easy to test while still aligning with the eventual pipeline.
+
+The project prefers boring, inspectable components over unnecessary application complexity.
+
+## Roadmap
+
+1. Define the payment model and EPC payload structure.
+2. Generate QR code images through `qrencode`.
+3. Assemble the self-contained HTML payment document.
+4. Persist archived documents in SQLite.
+5. Add focused CLI and document-generation checks as real requirements appear.
+
+## Current status
+
+This repository is intentionally a skeleton for the architecture and package boundaries only. It does not yet implement EPC generation, SQLite persistence, QR generation, or any production payment logic.
