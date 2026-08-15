@@ -178,6 +178,67 @@ func TestSaveRejectsMissingPayloadOrHTML(t *testing.T) {
 	}
 }
 
+func TestUpdateAndDeletePayment(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "payments.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer store.Close()
+
+	createdAt := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
+	id, err := store.Save(epc.Payment{Recipient: "Original", IBAN: "DE89370400440532013000", Amount: 1234, Reference: "REF-1"}, "payload-1", "html-1", createdAt, "old")
+	if err != nil {
+		t.Fatalf("Save() returned error: %v", err)
+	}
+
+	updatedAt := createdAt.Add(2 * time.Hour)
+	err = store.Update(id, epc.Payment{Recipient: "Updated", IBAN: "FR1420041010050000000000013", Amount: 2500, Reference: "REF-2"}, "payload-2", "html-2", updatedAt, "new")
+	if err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+
+	record, err := store.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID() after update returned error: %v", err)
+	}
+	if record.Recipient != "Updated" {
+		t.Fatalf("Recipient after update = %q, want %q", record.Recipient, "Updated")
+	}
+	if record.Notes != "new" {
+		t.Fatalf("Notes after update = %q, want %q", record.Notes, "new")
+	}
+	if !record.CreatedAt.Equal(updatedAt) {
+		t.Fatalf("CreatedAt after update = %s, want %s", record.CreatedAt.Format(time.RFC3339), updatedAt.Format(time.RFC3339))
+	}
+
+	if err := store.Delete(id); err != nil {
+		t.Fatalf("Delete() returned error: %v", err)
+	}
+	if _, err := store.GetByID(id); err == nil {
+		t.Fatalf("GetByID() after delete unexpectedly succeeded")
+	}
+}
+
+func TestStoreUpdateDeleteNotFound(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "payments.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer store.Close()
+
+	err = store.Update(99, epc.Payment{Recipient: "X", IBAN: "DE89370400440532013000", Amount: 1000}, "payload", "html", time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Update(99) error = %v, want not-found", err)
+	}
+
+	err = store.Delete(99)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Delete(99) error = %v, want not-found", err)
+	}
+}
+
 func TestFilterQueries(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "payments.db")
 	store, err := Open(dbPath)

@@ -139,6 +139,59 @@ func (db *DB) Save(payment epc.Payment, payload string, html string, createdAt t
 	return id, nil
 }
 
+func (db *DB) Update(id int64, payment epc.Payment, payload string, html string, createdAt time.Time, notes ...string) error {
+	if db == nil || db.db == nil {
+		return fmt.Errorf("database is not open")
+	}
+	if strings.TrimSpace(payload) == "" {
+		return fmt.Errorf("epc payload is required")
+	}
+	if strings.TrimSpace(html) == "" {
+		return fmt.Errorf("html is required")
+	}
+
+	noteText := ""
+	if len(notes) > 0 {
+		noteText = notes[0]
+	}
+
+	res, err := db.db.Exec(`
+		UPDATE payments
+		SET created_at = ?, recipient = ?, iban = ?, amount_cents = ?, reference = ?, notes = ?, epc_payload = ?, html = ?
+		WHERE id = ?
+	`, createdAt.Format(time.RFC3339), payment.Recipient, payment.IBAN, payment.Amount, payment.Reference, noteText, payload, html, id)
+	if err != nil {
+		return fmt.Errorf("update payment %d: %w", id, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read updated payment rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("payment %d not found", id)
+	}
+	return nil
+}
+
+func (db *DB) Delete(id int64) error {
+	if db == nil || db.db == nil {
+		return fmt.Errorf("database is not open")
+	}
+
+	res, err := db.db.Exec(`DELETE FROM payments WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete payment %d: %w", id, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read deleted payment rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("payment %d not found", id)
+	}
+	return nil
+}
+
 // Close closes the underlying SQLite connection.
 func (db *DB) Close() error {
 	if db == nil || db.db == nil {

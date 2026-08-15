@@ -16,3 +16,7 @@ coverage.out
 # OS files
 .DS_Store
 Thumbs.db
+
+# 
+payments.db
+payment.html

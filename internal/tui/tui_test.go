@@ -72,3 +72,44 @@ func TestNewViewModelFiltersAcrossFields(t *testing.T) {
 		t.Fatalf("filtered row recipient = %q, want %q", vm.Rows[0].Recipient, "Acme GmbH")
 	}
 }
+
+func TestSelectedDataRowIndex(t *testing.T) {
+	tests := []struct {
+		name     string
+		selected int
+		want     int
+		ok       bool
+	}{
+		{name: "header", selected: 0, want: -1, ok: false},
+		{name: "first row", selected: 1, want: 0, ok: true},
+		{name: "second row", selected: 2, want: 1, ok: true},
+		{name: "past end", selected: 99, want: -1, ok: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := selectedDataRowIndex(tt.selected, 2)
+			if ok != tt.ok {
+				t.Fatalf("selectedDataRowIndex(%d, 2) ok = %v, want %v", tt.selected, ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("selectedDataRowIndex(%d, 2) = %d, want %d", tt.selected, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestListStateTracksCurrentRowsAfterRefresh(t *testing.T) {
+	state := &listState{}
+	state.setRows([]Row{{ID: 1, Recipient: "first"}})
+	if got := len(state.currentRows()); got != 1 {
+		t.Fatalf("len(state.currentRows()) = %d, want 1", got)
+	}
+	state.setRows([]Row{{ID: 2, Recipient: "second"}, {ID: 3, Recipient: "third"}})
+	if got := len(state.currentRows()); got != 2 {
+		t.Fatalf("len(state.currentRows()) after refresh = %d, want 2", got)
+	}
+	if got := state.currentRows()[1].Recipient; got != "third" {
+		t.Fatalf("state.currentRows()[1].Recipient = %q, want %q", got, "third")
+	}
+}
