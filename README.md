@@ -46,7 +46,20 @@ go run ./cmd/giro create \
 
 This writes `payment.html` in the current working directory and prints `generated payment.html` when successful.
 
+Optional TOML configuration is supported at `~/.config/lazy-epc/config.toml`.
+
+```toml
+# ~/.config/lazy-epc/config.toml
+# optional values; defaults remain in effect when the file is absent
+
+database = "~/payments.db"
+output_dir = "~/giro-output"
+timestamp_output = true
+```
+
 The `create` command accepts required `--recipient`, `--iban`, and `--amount` values and an optional `--reference` field. The amount parser accepts values like `12`, `12.3`, `12.34`, and `0.01`, and rejects malformed input, negatives, zero, and more than two decimal places.
+
+When `timestamp_output = false`, generated files are named `payment.html`. When `timestamp_output = true`, they become `payment-YYYYMMDD-HHMMSS.html` in the configured `output_dir`. The config values are optional; if the config file is absent, the current default behavior stays the same. CLI flags override config values for the current run.
 
 On successful generation, the CLI also opens or creates a local SQLite database named `payments.db` in the working directory and stores the generated payment record, including the EPC payload, rendered HTML, integer amount in cents, and a stable RFC3339 timestamp.
 

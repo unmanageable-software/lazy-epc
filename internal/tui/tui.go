@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
+	"github.com/unmanageable-software/lazy-epc/internal/config"
 	"github.com/unmanageable-software/lazy-epc/internal/document"
 	"github.com/unmanageable-software/lazy-epc/internal/epc"
 	"github.com/unmanageable-software/lazy-epc/internal/qr"
@@ -95,8 +97,13 @@ func NewViewModel(db *store.DB, filter string) (*ViewModel, error) {
 }
 
 // Run opens the SQLite database and starts the TUI.
-func Run() error {
-	dbPath := filepath.Join(".", "payments.db")
+func Run(cfg config.Config) error {
+	if cfg.Database != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.Database), 0o755); err != nil {
+			return fmt.Errorf("create database directory %s: %w", filepath.Dir(cfg.Database), err)
+		}
+	}
+	dbPath := cfg.Database
 	db, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open payment database: %w", err)
@@ -122,7 +129,7 @@ func Run() error {
 			showFormError(app, pages, list, "could not load payment: "+err.Error())
 			return
 		}
-		showCloneForm(app, pages, db, list, refreshList, selected)
+		showCloneForm(app, pages, db, list, refreshList, cfg, selected)
 	})
 
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -259,7 +266,19 @@ func showFormError(app *tview.Application, pages *tview.Pages, list *tview.Table
 	app.SetFocus(modal)
 }
 
-func showCloneForm(app *tview.Application, pages *tview.Pages, db *store.DB, list *tview.Table, refreshList func(), original *store.PaymentRecord) {
+func openPaymentHTML(html string) error {
+	const target = "/tmp/payment-qr.html"
+	if err := os.WriteFile(target, []byte(html), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", target, err)
+	}
+	cmd := exec.Command("xdg-open", target)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("launch %s: %w", target, err)
+	}
+	return nil
+}
+
+func showCloneForm(app *tview.Application, pages *tview.Pages, db *store.DB, list *tview.Table, refreshList func(), cfg config.Config, original *store.PaymentRecord) {
 	if original == nil {
 		showFormError(app, pages, list, "no payment selected")
 		return
@@ -302,7 +321,12 @@ func showCloneForm(app *tview.Application, pages *tview.Pages, db *store.DB, lis
 		}
 
 		generatedAt := time.Now().UTC()
-		payload, html, err := generatePaymentDocument(newPayment, "payment.html", generatedAt)
+		if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+			errorView.SetText("generate: create output directory: " + err.Error())
+			return
+		}
+		outputPath := cfg.PaymentOutputPath(generatedAt)
+		payload, html, err := generatePaymentDocument(newPayment, outputPath, generatedAt)
 		if err != nil {
 			errorView.SetText("generate: " + err.Error())
 			return
@@ -334,7 +358,12 @@ func showCloneForm(app *tview.Application, pages *tview.Pages, db *store.DB, lis
 		}
 
 		generatedAt := time.Now().UTC()
-		payload, html, err := generatePaymentDocument(updatedPayment, "payment.html", generatedAt)
+		if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+			errorView.SetText("generate: create output directory: " + err.Error())
+			return
+		}
+		outputPath := cfg.PaymentOutputPath(generatedAt)
+		payload, html, err := generatePaymentDocument(updatedPayment, outputPath, generatedAt)
 		if err != nil {
 			errorView.SetText("generate: " + err.Error())
 			return
@@ -371,6 +400,16 @@ func showCloneForm(app *tview.Application, pages *tview.Pages, db *store.DB, lis
 		})
 		pages.AddPage("delete-confirm", modal, true, true)
 		app.SetFocus(modal)
+	})
+	form.AddButton("Open", func() {
+		if original == nil {
+			errorView.SetText("open: no payment selected")
+			return
+		}
+		if err := openPaymentHTML(original.HTML); err != nil {
+			errorView.SetText("open: " + err.Error())
+			return
+		}
 	})
 	form.AddButton("Cancel", func() {
 		pages.SwitchToPage("list")
@@ -443,9 +482,9 @@ func parseDecimalAmount(raw string) (int64, error) {
 	if amount == "" {
 		return 0, fmt.Errorf("amount is required")
 	}
-	if strings.HasPrefix(amount, "+") {
-		amount = strings.TrimPrefix(amount, "+")
-	}
+
+	amount = strings.TrimPrefix(amount, "+")
+
 	if strings.HasPrefix(amount, "-") {
 		return 0, fmt.Errorf("amount must be positive")
 	}

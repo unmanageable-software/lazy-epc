@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/unmanageable-software/lazy-epc/internal/config"
 	"github.com/unmanageable-software/lazy-epc/internal/document"
 	"github.com/unmanageable-software/lazy-epc/internal/epc"
 	"github.com/unmanageable-software/lazy-epc/internal/qr"
@@ -29,19 +30,21 @@ func run(args []string) error {
 		return usageError()
 	}
 
+	cfg, err := config.LoadDefault()
+	if err != nil {
+		return err
+	}
+
 	switch args[0] {
 	case "demo":
 		if len(args) != 1 {
 			return usageError()
 		}
-		return runDemo()
+		return runDemo(cfg)
 	case "create":
-		return createCommand(args[1:], "payment.html")
+		return createCommandWithConfig(args[1:], cfg, "")
 	case "tui":
-		if len(args) != 1 {
-			return usageError()
-		}
-		return tui.Run()
+		return tuiCommand(args[1:], cfg)
 	default:
 		return usageError()
 	}
@@ -51,36 +54,70 @@ func usageError() error {
 	return fmt.Errorf("usage: giro create --recipient \"Example GmbH\" --iban DE89370400440532013000 --amount 12.34 [--reference \"Invoice 2026-001\"] [--notes \"Optional internal note\"] | giro demo | giro tui")
 }
 
-func runDemo() error {
+func runDemo(cfg config.Config) error {
+	outputPath := cfg.PaymentOutputPath(time.Now().UTC())
+	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+		return fmt.Errorf("create output directory %s: %w", cfg.OutputDir, err)
+	}
 	payment := epc.Payment{
 		Recipient:              "Demo Recipient",
 		IBAN:                   "DE89370400440532013000",
 		Amount:                 1234,
 		UnstructuredRemittance: "Invoice 2026-001",
 	}
-	_, _, err := generatePaymentDocument(payment, "payment.html", time.Now())
+	_, _, err := generatePaymentDocument(payment, outputPath, time.Now().UTC())
 	return err
 }
 
 func createCommand(args []string, outputPath string) error {
+	cfg, err := config.LoadDefault()
+	if err != nil {
+		return err
+	}
+	return createCommandWithConfig(args, cfg, outputPath)
+}
+
+func createCommandWithConfig(args []string, cfg config.Config, outputPath string) error {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	var (
-		recipient string
-		iban      string
-		amountStr string
-		reference string
-		notes     string
+		recipient      string
+		iban           string
+		amountStr      string
+		reference      string
+		notes          string
+		overrideDB     string
+		overrideOutput string
+		overrideTS     bool
 	)
 	fs.StringVar(&recipient, "recipient", "", "recipient name")
 	fs.StringVar(&iban, "iban", "", "IBAN")
 	fs.StringVar(&amountStr, "amount", "", "amount in EUR, for example 12.34")
 	fs.StringVar(&reference, "reference", "", "optional payment reference")
 	fs.StringVar(&notes, "notes", "", "optional local note stored with the payment")
+	fs.StringVar(&overrideDB, "database", cfg.Database, "database path")
+	fs.StringVar(&overrideOutput, "output-dir", cfg.OutputDir, "output directory")
+	fs.BoolVar(&overrideTS, "timestamp-output", cfg.TimestampOutput, "include a timestamp in the output filename")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse arguments: %w", err)
+	}
+
+	cfg.Database = config.ExpandPath(overrideDB)
+	cfg.OutputDir = config.ExpandPath(overrideOutput)
+	cfg.TimestampOutput = overrideTS
+	if outputPath == "" {
+		outputPath = cfg.PaymentOutputPath(time.Now().UTC())
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return fmt.Errorf("create output directory %s: %w", filepath.Dir(outputPath), err)
+	}
+	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+		return fmt.Errorf("create output directory %s: %w", cfg.OutputDir, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.Database), 0o755); err != nil {
+		return fmt.Errorf("create database directory %s: %w", filepath.Dir(cfg.Database), err)
 	}
 
 	if strings.TrimSpace(recipient) == "" {
@@ -111,7 +148,7 @@ func createCommand(args []string, outputPath string) error {
 		return err
 	}
 
-	dbPath := filepath.Join(filepath.Dir(outputPath), "payments.db")
+	dbPath := cfg.Database
 	db, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open payment database: %w", err)
@@ -125,6 +162,27 @@ func createCommand(args []string, outputPath string) error {
 
 	fmt.Printf("generated %s\nstored payment #%d\n", outputPath, id)
 	return nil
+}
+
+func tuiCommand(args []string, cfg config.Config) error {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var (
+		overrideDB     string
+		overrideOutput string
+		overrideTS     bool
+	)
+	fs.StringVar(&overrideDB, "database", cfg.Database, "database path")
+	fs.StringVar(&overrideOutput, "output-dir", cfg.OutputDir, "output directory")
+	fs.BoolVar(&overrideTS, "timestamp-output", cfg.TimestampOutput, "include a timestamp in the output filename")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("parse arguments: %w", err)
+	}
+	cfg.Database = config.ExpandPath(overrideDB)
+	cfg.OutputDir = config.ExpandPath(overrideOutput)
+	cfg.TimestampOutput = overrideTS
+	return tui.Run(cfg)
 }
 
 func generatePaymentDocument(payment epc.Payment, outputPath string, generatedAt time.Time) (string, string, error) {
@@ -158,9 +216,7 @@ func parseAmount(raw string) (int64, error) {
 		return 0, fmt.Errorf("amount must be positive")
 	}
 
-	if strings.HasPrefix(amount, "+") {
-		amount = strings.TrimPrefix(amount, "+")
-	}
+	amount = strings.TrimPrefix(amount, "+")
 
 	parts := strings.Split(amount, ".")
 	if len(parts) > 2 {

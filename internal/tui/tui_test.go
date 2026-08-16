@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/unmanageable-software/lazy-epc/internal/config"
 	"github.com/unmanageable-software/lazy-epc/internal/epc"
 	"github.com/unmanageable-software/lazy-epc/internal/store"
 )
@@ -111,5 +112,21 @@ func TestListStateTracksCurrentRowsAfterRefresh(t *testing.T) {
 	}
 	if got := state.currentRows()[1].Recipient; got != "third" {
 		t.Fatalf("state.currentRows()[1].Recipient = %q, want %q", got, "third")
+	}
+}
+
+func TestConfigLoadUsesDefaultPathAndDefaults(t *testing.T) {
+	cfg, err := config.Load("/tmp/does-not-exist")
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.Database != "payments.db" {
+		t.Fatalf("cfg.Database = %q, want %q", cfg.Database, "payments.db")
+	}
+	if cfg.OutputDir != "." {
+		t.Fatalf("cfg.OutputDir = %q, want %q", cfg.OutputDir, ".")
+	}
+	if cfg.TimestampOutput {
+		t.Fatal("cfg.TimestampOutput = true, want false")
 	}
 }
